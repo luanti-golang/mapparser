@@ -3,7 +3,7 @@ package mapparser
 import (
 	"encoding/binary"
 
-	"github.com/minetest-go/types"
+	"github.com/luanti-golang/types"
 )
 
 func parseBlockMapping(data []byte, offset *int, mapblock *types.MapBlock) {

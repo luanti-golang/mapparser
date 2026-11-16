@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/minetest-go/mapparser"
+	"github.com/luanti-golang/mapparser"
 )
 
 // sqlite3 -header -csv map.sqlite "select pos, hex(data) from blocks > map.csv"

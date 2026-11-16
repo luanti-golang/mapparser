@@ -1,15 +1,14 @@
 
-Minetest map parser library for go
+Luanti map parser library for go
 
-![](https://github.com/minetest-go/mapparser/workflows/test/badge.svg)
-[![Coverage Status](https://coveralls.io/repos/github/minetest-go/mapparser/badge.svg)](https://coveralls.io/github/minetest-go/mapparser)
+![](https://github.com/luanti-golang/mapparser/workflows/test/badge.svg)
 
 # Features
 
 * Extracts metadata/inventories
 * NodeID/Param1/Param2 handling
 * Supports zlib compressed mapblocks
-* zstd compressed mapblocks (minetest 5.5+)
+* zstd compressed mapblocks (luanti 5.5+)
 
 # Example
 

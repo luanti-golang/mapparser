@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/minetest-go/types"
+	"github.com/luanti-golang/types"
 )
 
 func validateMapblock(t *testing.T, mapblock *types.MapBlock) {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/minetest-go/types"
+	"github.com/luanti-golang/types"
 )
 
 var ErrNoData = errors.New("no data")

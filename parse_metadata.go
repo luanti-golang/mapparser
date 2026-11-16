@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/minetest-go/types"
+	"github.com/luanti-golang/types"
 )
 
 /*

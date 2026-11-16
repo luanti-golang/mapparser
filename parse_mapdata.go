@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/minetest-go/types"
+	"github.com/luanti-golang/types"
 )
 
 const MapDataSize = 16384
