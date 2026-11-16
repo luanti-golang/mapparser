@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,42 +12,49 @@ import (
 	"github.com/luanti-golang/mapparser"
 )
 
-// sqlite3 -header -csv map.sqlite "select pos, hex(data) from blocks > map.csv"
+// maximum line length (hex-encoded mapblock), mapblocks with lots of metadata can be large
+const maxLineSize = 256 << 20
+
+// sqlite3 -header -csv map.sqlite "select pos, hex(data) from blocks" > map.csv
 func main() {
 	file, err := os.Open("map.csv")
 	if err != nil {
 		panic(err)
 	}
+	defer file.Close()
+
+	out := bufio.NewWriter(os.Stdout)
+	defer out.Flush()
+
 	sc := bufio.NewScanner(file)
+	sc.Buffer(make([]byte, 0, 1<<20), maxLineSize)
+
 	line_num := 0
 	for sc.Scan() {
+		line_num++
 		line := sc.Text()
-		parts := strings.Split(line, ",")
-		if len(parts) != 2 {
+		pos_str, hex_str, ok := strings.Cut(line, ",")
+		if !ok {
 			panic(fmt.Errorf("invalid format @ %d", line_num))
 		}
 
-		if len(parts[1])%2 != 0 {
-			panic(fmt.Errorf("invalid hex count @ %d, len: %d", line_num, len(parts[1])))
-		}
-
-		pos, err := strconv.ParseInt(parts[0], 10, 64)
+		pos, err := strconv.ParseInt(pos_str, 10, 64)
 		if err != nil {
-			panic(err)
+			if line_num == 1 {
+				// csv header
+				continue
+			}
+			panic(fmt.Errorf("invalid position @ %d: %w", line_num, err))
 		}
 
-		b := make([]byte, len(parts[1])/2)
-		for i := 0; i < len(parts[1]); i += 2 {
-			num, err := strconv.ParseUint(parts[1][i:i+2], 16, 32)
-			if err != nil {
-				panic(fmt.Errorf("error @ %d: %s", line_num, err.Error()))
-			}
-			b[i/2] = byte(num)
+		b, err := hex.DecodeString(hex_str)
+		if err != nil {
+			panic(fmt.Errorf("invalid hex @ %d: %w", line_num, err))
 		}
 
 		mb, err := mapparser.Parse(b)
 		if err != nil {
-			panic(err)
+			panic(fmt.Errorf("parse error @ %d: %w", line_num, err))
 		}
 
 		x, y, z := PlainToCoord(pos)
@@ -55,8 +63,10 @@ func main() {
 			panic(err)
 		}
 
-		fmt.Printf("%d;%d;%d;%s\n", x, y, z, txt)
+		fmt.Fprintf(out, "%d;%d;%d;%s\n", x, y, z, txt)
+	}
 
-		line_num++
+	if err := sc.Err(); err != nil {
+		panic(fmt.Errorf("read error after line %d: %w", line_num, err))
 	}
 }

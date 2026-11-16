@@ -1,19 +1,12 @@
 package mapparser
 
 import (
-	"bufio"
 	"bytes"
-	"encoding/binary"
-	"errors"
+	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/luanti-golang/types"
 )
-
-/*
-lua vm: https://github.com/yuin/gopher-lua
-*/
 
 const (
 	INVENTORY_TERMINATOR = "EndInventory"
@@ -23,98 +16,154 @@ const (
 	ITEM_EMPTY           = "Empty"
 )
 
-func parseMetadata(metadata []byte, mapblock *types.MapBlock) error {
-	offset := 0
-	version := metadata[offset]
+var (
+	inventoryStartPrefix = []byte(INVENTORY_START + " ")
+	itemPrefix           = []byte(ITEM_PREFIX + " ")
+)
+
+// maxListCapacityHint caps the preallocation taken from the (untrusted) list size field
+const maxListCapacityHint = 1024
+
+func parseMetadata(c *cursor, mapblock *types.MapBlock) error {
+	version, err := c.u8()
+	if err != nil {
+		return err
+	}
 
 	if version == 0 {
-		//No data?
+		// no metadata
 		return nil
 	}
 
-	offset++
-	count := int(binary.BigEndian.Uint16(metadata[offset:]))
+	count, err := c.u16()
+	if err != nil {
+		return err
+	}
 
-	offset += 2
+	for i := 0; i < int(count); i++ {
+		pos, err := c.u16()
+		if err != nil {
+			return err
+		}
+		position := int(pos)
 
-	for i := 0; i < count; i++ {
-		position := int(binary.BigEndian.Uint16(metadata[offset:]))
-		fields := map[string]string{}
+		valuecount, err := c.u32()
+		if err != nil {
+			return err
+		}
+		// every value takes at least 6 bytes (u16 key length + u32 value length);
+		// reject impossible counts before using them as an allocation hint
+		if uint64(valuecount)*6 > uint64(c.remaining()) {
+			return fmt.Errorf("%w: metadata value count %d at offset %d", ErrTruncated, valuecount, c.off)
+		}
+
+		fields := make(map[string]string, valuecount)
 		mapblock.Fields[position] = fields
 
-		offset += 2
-		valuecount := int(binary.BigEndian.Uint32(metadata[offset:]))
-
-		offset += 4
-		for j := 0; j < valuecount; j++ {
-			keyLength := int(binary.BigEndian.Uint16(metadata[offset:]))
-			offset += 2
-
-			key := string(metadata[offset : keyLength+offset])
-			offset += keyLength
-
-			valueLength := int(binary.BigEndian.Uint32(metadata[offset:]))
-			offset += 4
-
-			if len(metadata) <= valueLength+offset {
-				return errors.New("metadata too short: " + strconv.Itoa(len(metadata)) +
-					", valuelength: " + strconv.Itoa(int(valueLength)))
+		for j := 0; j < int(valuecount); j++ {
+			keyLength, err := c.u16()
+			if err != nil {
+				return err
+			}
+			key, err := c.take(int(keyLength))
+			if err != nil {
+				return err
 			}
 
-			value := string(metadata[offset : valueLength+offset])
-			offset += valueLength
+			valueLength, err := c.u32()
+			if err != nil {
+				return err
+			}
+			if uint64(valueLength) > uint64(c.remaining()) {
+				return fmt.Errorf("%w: metadata value length %d at offset %d, have %d", ErrTruncated, valueLength, c.off, c.remaining())
+			}
+			value, err := c.take(int(valueLength))
+			if err != nil {
+				return err
+			}
 
-			fields[key] = value
+			fields[string(key)] = string(value)
 
-			if version >= 2 { /* private tag doesn't exist in version=1 */
-				offset++
+			if version >= 2 {
+				// private flag, doesn't exist in version 1
+				if err = c.skip(1); err != nil {
+					return err
+				}
 			}
 		}
 
-		var currentInventoryName *string
-		var currentInventory []string
+		if err = parseInventory(c, mapblock, position); err != nil {
+			return err
+		}
+	}
 
-		scanner := bufio.NewScanner(bytes.NewReader(metadata[offset:]))
-		for scanner.Scan() {
-			txt := scanner.Text()
-			offset += len(txt) + 1
+	return nil
+}
 
-			if strings.HasPrefix(txt, INVENTORY_START) {
-				pairs := strings.Split(txt, " ")
-				currentInventoryName = &pairs[1]
-				currentInventory = make([]string, 0)
-				inv := mapblock.Inventory[position]
+// parseInventory parses the text-serialized inventory up to and including "EndInventory"
+func parseInventory(c *cursor, mapblock *types.MapBlock, position int) error {
+	var inv map[string][]string
+	var listName string
+	var list []string
+	inList := false
+
+	flush := func() {
+		if inList {
+			inv[listName] = list
+		}
+	}
+
+	for {
+		line, err := c.line()
+		if err != nil {
+			return fmt.Errorf("inventory not terminated: %w", err)
+		}
+		line = bytes.TrimSuffix(line, []byte{'\r'})
+
+		switch {
+		case string(line) == INVENTORY_TERMINATOR:
+			flush()
+			return nil
+
+		case bytes.HasPrefix(line, inventoryStartPrefix):
+			flush()
+			parts := bytes.Fields(line)
+			if len(parts) < 2 {
+				return fmt.Errorf("malformed inventory list header: %q", line)
+			}
+			if inv == nil {
+				inv = mapblock.Inventory[position]
 				if inv == nil {
 					inv = map[string][]string{}
 					mapblock.Inventory[position] = inv
 				}
-				inv[*currentInventoryName] = currentInventory
-
-			} else if txt == INVENTORY_END {
-				currentInventoryName = nil
-				currentInventory = nil
-			} else if currentInventory != nil {
-				//content
-				inv := mapblock.Inventory[position]
-				if strings.HasPrefix(txt, ITEM_PREFIX) {
-					item := txt[len(ITEM_PREFIX)+1:]
-					currentInventory = append(currentInventory, item)
-				} else if txt == ITEM_EMPTY {
-					currentInventory = append(currentInventory, "")
-				}
-				inv[*currentInventoryName] = currentInventory
-
-			} else if txt == INVENTORY_TERMINATOR {
-				break
-
-			} else {
-				return errors.New("Malformed inventory: " + txt)
 			}
+			capHint := 0
+			if len(parts) >= 3 {
+				if n, err := strconv.Atoi(string(parts[2])); err == nil && n > 0 {
+					capHint = min(n, maxListCapacityHint)
+				}
+			}
+			listName = string(parts[1])
+			list = make([]string, 0, capHint)
+			inList = true
+			inv[listName] = list
+
+		case string(line) == INVENTORY_END:
+			flush()
+			inList = false
+			list = nil
+
+		case inList:
+			if bytes.HasPrefix(line, itemPrefix) {
+				list = append(list, string(line[len(itemPrefix):]))
+			} else if string(line) == ITEM_EMPTY {
+				list = append(list, "")
+			}
+			// other lines (e.g. "Width 0") are ignored
+
+		default:
+			return fmt.Errorf("malformed inventory: %q", line)
 		}
-
-		//TODO
-
 	}
-
-	return nil
 }
