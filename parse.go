@@ -35,7 +35,7 @@ func parse(version uint8, body []byte, size int, network bool) (*types.MapBlock,
 
 	var err error
 	if version >= 29 {
-		err = parseZstdBlock(body, mapblock)
+		err = parseZstdBlock(body, mapblock, network)
 	} else {
 		err = parseZlibBlock(version, body, mapblock, network)
 	}
@@ -111,8 +111,8 @@ func parseZlibBlock(version uint8, body []byte, mapblock *types.MapBlock, networ
 }
 
 // parseZstdBlock parses version 29+ (whole body zstd-compressed)
-func parseZstdBlock(body []byte, mapblock *types.MapBlock) error {
-	raw, err := decompressZstd(body)
+func parseZstdBlock(body []byte, mapblock *types.MapBlock, network bool) error {
+	raw, err := decompressZstdBody(body, network)
 	if err != nil {
 		return err
 	}
@@ -129,18 +129,23 @@ func parseZstdBlock(body []byte, mapblock *types.MapBlock) error {
 		return err
 	}
 
-	timestamp, err := c.u32()
-	if err != nil {
-		return err
-	}
-	mapblock.Timestamp = timestamp
+	// The timestamp and the name-id mapping are only written to disk. Over the
+	// network the content ids are the server's global ids (see the node
+	// definitions) and BlockMapping stays empty.
+	if !network {
+		timestamp, err := c.u32()
+		if err != nil {
+			return err
+		}
+		mapblock.Timestamp = timestamp
 
-	// name-id mapping version
-	if err = c.skip(1); err != nil {
-		return err
-	}
-	if err = parseBlockMapping(c, mapblock); err != nil {
-		return err
+		// name-id mapping version
+		if err = c.skip(1); err != nil {
+			return err
+		}
+		if err = parseBlockMapping(c, mapblock); err != nil {
+			return err
+		}
 	}
 
 	if err = parseWidths(c); err != nil {

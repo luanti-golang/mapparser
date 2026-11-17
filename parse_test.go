@@ -257,6 +257,34 @@ func TestParseNetworkBlock(t *testing.T) {
 	fmt.Println(string(str))
 }
 
+// TOCLIENT_BLOCKDATA payload (after the position) captured from a Luanti 5.18
+// server: no timestamp or name-id mapping, and a trailing network-specific
+// version byte after the zstd frame
+func TestParseNetworkBlockV29(t *testing.T) {
+	data, err := os.ReadFile("testdata/network-blockdata-v29.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mb, err := ParseNetwork(29, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mb.ContentId) != 4096 || len(mb.Param1) != 4096 || len(mb.Param2) != 4096 {
+		t.Fatalf("unexpected node data lengths: %d/%d/%d", len(mb.ContentId), len(mb.Param1), len(mb.Param2))
+	}
+	if len(mb.BlockMapping) != 0 {
+		t.Errorf("network blocks have no name-id mapping, got %v", mb.BlockMapping)
+	}
+	ids := map[int]bool{}
+	for _, id := range mb.ContentId {
+		ids[id] = true
+	}
+	if len(ids) < 2 {
+		t.Errorf("expected several content ids, got %v", ids)
+	}
+}
+
 func TestParseNetworkBlock2(t *testing.T) {
 	data, err := os.ReadFile("testdata/mapblock3516192727.bin")
 	if err != nil {

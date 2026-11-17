@@ -59,6 +59,18 @@ var zstdDecoder = sync.OnceValues(func() (*zstd.Decoder, error) {
 	)
 })
 
+// decompressZstdBody decompresses a version 29+ mapblock body. Over the network
+// the zstd frame is followed by the network-specific version byte
+// (MapBlock::serializeNetworkSpecific), which is not part of the frame.
+func decompressZstdBody(body []byte, network bool) ([]byte, error) {
+	if network && len(body) > 0 {
+		if raw, err := decompressZstd(body[:len(body)-1]); err == nil {
+			return raw, nil
+		}
+	}
+	return decompressZstd(body)
+}
+
 func decompressZstd(data []byte) ([]byte, error) {
 	dec, err := zstdDecoder()
 	if err != nil {
